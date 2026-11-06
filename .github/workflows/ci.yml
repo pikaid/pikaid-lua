@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lua ${{ matrix.lua }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        lua: ["5.3.6", "5.4.9", "5.5.1"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Lua ${{ matrix.lua }} from source
+        run: |
+          set -euo pipefail
+          curl -fsSLO "https://www.lua.org/ftp/lua-${{ matrix.lua }}.tar.gz"
+          tar xzf "lua-${{ matrix.lua }}.tar.gz"
+          # The posix target needs no readline and builds on both runners.
+          make -C "lua-${{ matrix.lua }}" posix
+          echo "LUA_BIN=$PWD/lua-${{ matrix.lua }}/src/lua" >> "$GITHUB_ENV"
+
+      - name: Report interpreter version
+        run: '"$LUA_BIN" -v'
+
+      - name: Run conformance suite
+        run: '"$LUA_BIN" spec/run.lua'
+
+  quality:
+    name: lint and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Install tooling
+        run: |
+          luarocks install luacheck
+          luarocks install luacov
+
+      - name: Lint
+        run: luacheck src spec
+
+      - name: Coverage
+        run: |
+          set -euo pipefail
+          LUA_PATH='./src/?.lua;./src/?/init.lua;;' lua -lluacov spec/run.lua
+          luacov
+          sed -n '/^Summary/,$p' luacov.report.out
+          total=$(awk '/^Total[[:space:]]/{print $4}' luacov.report.out | tr -d '%')
+          if [ -z "$total" ]; then
+            echo "could not read the coverage total" >&2
+            exit 1
+          fi
+          echo "line coverage: ${total}%"
+          awk -v total="$total" 'BEGIN { if (total + 0 < 90) { print "coverage below the 90% gate"; exit 1 } }'
+
+  package:
+    name: rockspec install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Install from the rockspec
+        run: luarocks make pikaid-0.1.0-1.rockspec
+
+      - name: Import and generate
+        run: |
+          lua -e '
+            local pikaid = require("pikaid")
+            local id = pikaid.generate()
+            assert(pikaid.validate(id), "generated value must validate")
+            assert(#id == 26, "text width")
+            assert(#pikaid.to_binary(id) == 17, "binary width")
+            assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round trip")
+            print("pikaid " .. pikaid.VERSION .. " ok: " .. id)
+          '

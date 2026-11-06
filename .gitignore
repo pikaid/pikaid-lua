@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# LuaRocks build artefacts
+*.rock
+*.src.rock
+/.luarocks/
+/lua_modules/
+
+# Coverage output
+luacov.stats.out
+luacov.report.out
+luacov.*.out
+/coverage/
+
+# Editor and tooling noise
+*.swp
+.idea/
+.vscode/
+
+# Local scratch space
+/.ai/tmp/
