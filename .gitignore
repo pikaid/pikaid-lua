@@ -18,5 +18,5 @@ luacov.*.out
 .idea/
 .vscode/
 
-# Local scratch space
-/.ai/tmp/
+# Local-only working artifacts (owner policy: never tracked or packaged)
+/.ai/

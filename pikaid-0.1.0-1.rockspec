@@ -5,7 +5,8 @@ version = "0.1.0-1"
 
 -- The 0.1.0 release tag does not exist yet: the implementation is prepared but
 -- not published. Tracking `main` keeps an install from a checkout working until
--- the first tag is cut.
+-- the first tag is cut. At release time, replace this branch with the immutable
+-- tag (`tag = "v0.1.0"`) before uploading the rockspec.
 source = {
   url = "git+https://github.com/pikaid/pikaid-lua.git",
   branch = "main",

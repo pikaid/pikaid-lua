@@ -60,10 +60,20 @@ jobs:
       - name: Lint
         run: luacheck src spec
 
+      - name: Verify the independent oracle fixture
+        run: |
+          set -euo pipefail
+          python3 spec/tools/generate_reference_cases.py
+          git diff --exit-code -- spec/fixtures/reference-cases.json
+
       - name: Coverage
         run: |
           set -euo pipefail
-          LUA_PATH='./src/?.lua;./src/?/init.lua;;' lua -lluacov spec/run.lua
+          # The LuaRocks action exports its install tree through LUA_PATH. Keep
+          # that path mounted so `-lluacov` resolves, then prepend the source
+          # directories used by the suite.
+          eval "$(luarocks path)"
+          LUA_PATH="./src/?.lua;./src/?/init.lua;${LUA_PATH:-}" lua -lluacov spec/run.lua
           luacov
           sed -n '/^Summary/,$p' luacov.report.out
           total=$(awk '/^Total[[:space:]]/{print $4}' luacov.report.out | tr -d '%')
@@ -71,6 +81,12 @@ jobs:
             echo "could not read the coverage total" >&2
             exit 1
           fi
+          case "$total" in
+            ''|*[!0-9.]*)
+              echo "invalid coverage total: $total" >&2
+              exit 1
+              ;;
+          esac
           echo "line coverage: ${total}%"
           awk -v total="$total" 'BEGIN { if (total + 0 < 90) { print "coverage below the 90% gate"; exit 1 } }'
 
@@ -89,7 +105,8 @@ jobs:
       - name: Install from the rockspec
         run: luarocks make pikaid-0.1.0-1.rockspec
 
-      - name: Import and generate
+      - name: Import and generate outside the checkout
+        working-directory: ${{ runner.temp }}
         run: |
           lua -e '
             local pikaid = require("pikaid")
@@ -98,5 +115,7 @@ jobs:
             assert(#id == 26, "text width")
             assert(#pikaid.to_binary(id) == 17, "binary width")
             assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round trip")
+            assert(pikaid.timestamp(id) > 0, "timestamp")
+            assert(#pikaid.randomness(id) == 12, "randomness")
             print("pikaid " .. pikaid.VERSION .. " ok: " .. id)
           '

@@ -136,7 +136,14 @@ return function(t)
       }
 
       for _, case in ipairs(clock_cases) do
-        local instance = pikaid.new({ entropy = function() return FIXED end, clock = case.clock })
+        local entropy_calls = 0
+        local instance = pikaid.new({
+          entropy = function()
+            entropy_calls = entropy_calls + 1
+            return FIXED
+          end,
+          clock = case.clock,
+        })
 
         t.error_code(case.code, function()
           instance.generate()
@@ -145,6 +152,8 @@ return function(t)
         t.error_code(case.code, function()
           instance.generate_binary()
         end, case.name .. ": generate_binary")
+
+        t.equal(entropy_calls, 0, case.name .. ": no entropy drawn before timestamp validation")
       end
     end)
 
@@ -167,6 +176,40 @@ return function(t)
           pikaid.generate_binary(case.value)
         end, case.name .. ": generate_binary")
       end
+    end)
+
+    t.it("rejects an invalid explicit timestamp before consuming entropy", function()
+      local calls = 0
+      local instance = pikaid.new({
+        entropy = function()
+          calls = calls + 1
+          return FIXED
+        end,
+        clock = function()
+          error("clock must not be called when a timestamp is supplied")
+        end,
+      })
+
+      local cases = {
+        { name = "negative", value = -1, code = "timestamp_out_of_range" },
+        { name = "above maximum", value = pikaid.MAX_TIMESTAMP + 1, code = "timestamp_out_of_range" },
+        { name = "float", value = 1.5, code = "invalid_timestamp" },
+        { name = "string", value = "1700000000", code = "invalid_timestamp" },
+        { name = "boolean", value = true, code = "invalid_timestamp" },
+        { name = "table", value = {}, code = "invalid_timestamp" },
+      }
+
+      for _, case in ipairs(cases) do
+        t.error_code(case.code, function()
+          instance.generate(case.value)
+        end, case.name .. ": generate")
+
+        t.error_code(case.code, function()
+          instance.generate_binary(case.value)
+        end, case.name .. ": generate_binary")
+      end
+
+      t.equal(calls, 0, "entropy provider was never called")
     end)
 
     t.it("never falls back to math.random", function()
