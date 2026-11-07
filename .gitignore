@@ -20,3 +20,5 @@ luacov.*.out
 
 # Local scratch space
 /.ai/tmp/
+
+/.??
