@@ -34,6 +34,7 @@ This implementation targets that revision exactly. It does not extend the format
 ## Requirements
 
 - **Lua 5.3, 5.4, or 5.5** from PUC-Rio. The implementation needs the integer subtype, the `//` operator, and `math.type`. It does **not** support Lua 5.1, Lua 5.2, or LuaJIT.
+- A standard 64-bit-integer build. The timestamp range exceeds 32-bit integers, so `LUA_32BITS` builds are not supported.
 - On Linux, macOS, and the BSDs, a readable `/dev/urandom`.
 - On other platforms, including Windows, a verified entropy provider passed to `pikaid.new`.
 
@@ -167,7 +168,7 @@ Error codes:
 
 | Offset | Length | Contents |
 | --- | --- | --- |
-| `0` | 5 | timestamp, unsigned big-endian, `0 .. 2^37 - 1` |
+| `0` | 5 | timestamp, unsigned big-endian, `0 .. 78364164095` (`36^7 - 1`) |
 | `5` | 12 | randomness bytes, unchanged |
 
 The text and binary forms are lossless translations of each other. Leading zeroes are always preserved.
@@ -213,7 +214,8 @@ Lint and coverage:
 
 ```sh
 luacheck src spec
-LUA_PATH='./src/?.lua;./src/?/init.lua;;' lua -lluacov spec/run.lua && luacov
+eval "$(luarocks path)"
+LUA_PATH="./src/?.lua;./src/?/init.lua;${LUA_PATH:-}" lua -lluacov spec/run.lua && luacov
 ```
 
 The suite is dependency-free and runs on every supported Lua version. It covers:
@@ -231,7 +233,7 @@ Continuous integration runs the same suite on Linux and macOS against Lua 5.3, 5
 
 ## Interoperability
 
-`spec/vectors/pikaid-v1.json` and `spec/vectors/pikaid-v1.schema.json` are copied unmodified from pikaid specification 1.0.4 at commit `17014d76f568c3ac9f9ce2927c1a018fdbc36d1d`; their provenance and hashes are recorded in `spec/vectors/README.md`. The PHP implementation's published fixtures are treated only as independent interoperability data, never as the normative source.
+`spec/vectors/pikaid-v1.json` and `spec/vectors/pikaid-v1.schema.json` are copied unmodified from the pikaid-php `v1.2.0` release at commit `e3f843edeb5157a5d2d25196cac0d69580810a95`; their provenance and hashes are recorded in `spec/vectors/README.md`. They implement the rules of pikaid specification revision `1.0.4` (commit `17014d76f568c3ac9f9ce2927c1a018fdbc36d1d`), which remains the normative source. The PHP fixtures are interoperability data, not the normative definition.
 
 ## License
 
