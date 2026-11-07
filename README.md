@@ -9,6 +9,7 @@
 # pikaid — Official Lua Implementation
 
 **Status: complete against specification 1.0.4 — not yet released to LuaRocks.**
+See [CHANGELOG.md](CHANGELOG.md) for the unreleased changes.
 
 This repository contains the **official Lua implementation** of [pikaid](https://github.com/pikaid), a compact, chronologically sortable, collision-resistant identifier format for databases, APIs, and distributed systems.
 
