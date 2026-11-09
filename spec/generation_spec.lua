@@ -232,6 +232,29 @@ return function(t)
       t.equal(pikaid.validate(result), true, "stub identifier is valid")
     end)
 
+    t.it("records a wall clock that moves backwards without corrupting the format", function()
+      local readings = { 1700000005, 1699999999, 1700000010 }
+      local cursor = 0
+      local instance = pikaid.new({
+        entropy = function() return FIXED end,
+        clock = function()
+          cursor = cursor + 1
+          return readings[cursor]
+        end,
+      })
+
+      local ids = {}
+
+      for index = 1, #readings do
+        ids[index] = instance.generate()
+        t.equal(pikaid.validate(ids[index]), true, "valid " .. index)
+        t.equal(pikaid.timestamp(ids[index]), readings[index], "timestamp " .. index)
+      end
+
+      t.equal(pikaid.compare(ids[1], ids[2]), 1, "backwards clock is visible in ordering")
+      t.equal(pikaid.compare(ids[2], ids[3]), -1, "forward clock resumes")
+    end)
+
     t.it("produces independent instances", function()
       local zeros = pikaid.new({
         entropy = function() return string.rep("\0", 12) end,

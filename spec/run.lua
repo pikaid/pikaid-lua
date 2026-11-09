@@ -17,13 +17,16 @@ package.path = table.concat({
 local harness = require("spec.support.harness")
 
 local suites = {
+  "spec.fixture_digests_spec",
   "spec.vectors_spec",
   "spec.reference_spec",
   "spec.known_answers_spec",
   "spec.validation_spec",
   "spec.conversion_spec",
   "spec.generation_spec",
+  "spec.platform_spec",
   "spec.api_spec",
+  "spec.readme_spec",
 }
 
 for _, name in ipairs(suites) do

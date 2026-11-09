@@ -53,6 +53,32 @@ return function(t)
       end
     end)
 
+    t.it("generates every reference case through the public generator", function()
+      local cursor = 0
+
+      local instance = pikaid.new({
+        entropy = function(count)
+          t.equal(count, 12, "generator entropy byte count")
+          return hex.decode(document.cases[cursor].randomness_hex)
+        end,
+        clock = function()
+          error("reference cases supply an explicit timestamp")
+        end,
+      })
+
+      for index, case in ipairs(document.cases) do
+        local label = string.format("case %d %s", index, case.name)
+        cursor = index
+
+        t.equal(instance.generate(case.timestamp), case.id, label .. ": generate")
+        t.equal(
+          hex.encode(instance.generate_binary(case.timestamp)),
+          case.bin_hex,
+          label .. ": generate_binary"
+        )
+      end
+    end)
+
     t.it("round-trips every identifier through binary and back", function()
       for index, case in ipairs(document.cases) do
         local label = string.format("case %d %s", index, case.name)

@@ -25,6 +25,13 @@ local STRING_CASES = {
   { name = "colon", value = repeated("0", 25) .. ":", code = "invalid_character" },
   { name = "newline", value = repeated("0", 25) .. "\n", code = "invalid_character" },
   { name = "tab", value = repeated("0", 25) .. "\t", code = "invalid_character" },
+  { name = "carriage return", value = repeated("0", 25) .. "\r", code = "invalid_character" },
+  { name = "CRLF", value = repeated("0", 24) .. "\r\n", code = "invalid_character" },
+  {
+    name = "zero-width space",
+    value = repeated("0", 23) .. string.char(0xE2, 0x80, 0x8B),
+    code = "invalid_character",
+  },
   { name = "NUL byte", value = repeated("0", 25) .. "\0", code = "invalid_character" },
   { name = "UTF-8 letter", value = repeated("0", 24) .. string.char(0xC3, 0xA9), code = "invalid_character" },
   { name = "emoji", value = repeated("0", 22) .. string.char(0xF0, 0x9F, 0x98, 0x80), code = "invalid_character" },
