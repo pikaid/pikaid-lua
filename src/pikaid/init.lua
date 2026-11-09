@@ -32,7 +32,7 @@ local entropy = require("pikaid.entropy")
 local pikaid = {}
 
 --- Library version (the identifier format itself is unversioned).
-pikaid.VERSION = "0.1.0"
+pikaid.VERSION = "1.0.0"
 
 --- Exact length of a pikaid string.
 pikaid.STRING_LENGTH = 26

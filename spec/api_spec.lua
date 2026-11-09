@@ -5,7 +5,7 @@ local pikaid = require("pikaid")
 return function(t)
   t.describe("public API", function()
     t.it("publishes the documented constants", function()
-      t.equal(pikaid.VERSION, "0.1.0", "version")
+      t.equal(pikaid.VERSION, "1.0.0", "version")
       t.equal(pikaid.STRING_LENGTH, 26, "string length")
       t.equal(pikaid.BINARY_LENGTH, 17, "binary length")
       t.equal(pikaid.TIMESTAMP_DIGITS, 7, "timestamp digits")
@@ -106,6 +106,25 @@ return function(t)
       t.equal(pikaid.randomness(id), string.rep("\170", 12), "text randomness")
       t.equal(pikaid.parse_binary(binary).randomness, string.rep("\170", 12), "binary randomness")
       t.equal(pikaid.from_binary(pikaid.to_binary(id)), id, "text round trip")
+    end)
+
+    t.it("captures provider options at construction time", function()
+      local calls = 0
+      local options = {
+        entropy = function()
+          calls = calls + 1
+          return string.rep("\0", 12)
+        end,
+        clock = function() return 0 end,
+      }
+
+      local instance = pikaid.new(options)
+
+      options.entropy = function() error("entropy mutated after construction") end
+      options.clock = function() error("clock mutated after construction") end
+
+      t.equal(instance.generate(), "00000000000000000000000000", "original providers")
+      t.equal(calls, 1, "original provider called")
     end)
 
     t.it("is independent of the process collation locale", function()

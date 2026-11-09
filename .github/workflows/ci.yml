@@ -28,20 +28,117 @@ jobs:
       - name: Build Lua ${{ matrix.lua }} from source
         run: |
           set -euo pipefail
-          curl -fsSLO "https://www.lua.org/ftp/lua-${{ matrix.lua }}.tar.gz"
-          tar xzf "lua-${{ matrix.lua }}.tar.gz"
-          # The posix target needs no readline and builds on both runners.
-          make -C "lua-${{ matrix.lua }}" posix
-          echo "LUA_BIN=$PWD/lua-${{ matrix.lua }}/src/lua" >> "$GITHUB_ENV"
+          version="${{ matrix.lua }}"
+          archive="lua-$version.tar.gz"
+
+          download() {
+            echo "fetching $1"
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+              --connect-timeout 20 --max-time 300 "$1" -o "$archive"
+          }
+
+          # lua.org is canonical but has been unreachable from the macOS
+          # runners. Retry it, then take the same tagged release from the
+          # official GitHub mirror.
+          if ! download "https://www.lua.org/ftp/lua-$version.tar.gz"; then
+            echo "primary download failed; using the GitHub mirror" >&2
+            download "https://github.com/lua/lua/archive/refs/tags/v$version.tar.gz"
+          fi
+
+          tar xzf "$archive"
+          test -d "lua-$version"
+
+          if [ -d "lua-$version/src" ]; then
+            # Release tarball layout: a root Makefile with a src/ directory.
+            # The posix target needs no readline and builds on both runners.
+            make -C "lua-$version" posix
+            echo "LUA_BIN=$PWD/lua-$version/src/lua" >> "$GITHUB_ENV"
+          else
+            # The GitHub mirror is the flat development tree, which has no
+            # release Makefile targets. Compile the interpreter with the same
+            # POSIX configuration as `make posix`; ltests.c is a test-only
+            # unit that would add its own entry points.
+            (
+              cd "lua-$version"
+              cc -O2 -DLUA_USE_POSIX -o lua \
+                $(ls *.c | grep -vE '^(luac|onelua|ltests)\.c$') -lm -ldl
+            )
+            echo "LUA_BIN=$PWD/lua-$version/lua" >> "$GITHUB_ENV"
+          fi
 
       - name: Report interpreter version
-        run: '"$LUA_BIN" -v'
+        run: |
+          set -euo pipefail
+          "$LUA_BIN" -v
+          "$LUA_BIN" -e 'assert(math.maxinteger > 2^53, "64-bit integers required")'
 
       - name: Run conformance suite
-        run: '"$LUA_BIN" spec/run.lua'
+        run: |
+          set -euo pipefail
+          "$LUA_BIN" spec/run.lua | tee conformance.txt
+          grep -Eq '^[0-9]+ tests, [0-9]+ assertions: [0-9]+ passed, 0 failed$' conformance.txt
+
+  integer-width:
+    name: 32-bit integer guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Lua 5.4 with 32-bit integers
+        run: |
+          set -euo pipefail
+          version=5.4.9
+          archive="lua-$version.tar.gz"
+
+          download() {
+            echo "fetching $1"
+            curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+              --connect-timeout 20 --max-time 300 "$1" -o "$archive"
+          }
+
+          if ! download "https://www.lua.org/ftp/lua-$version.tar.gz"; then
+            echo "primary download failed; using the GitHub mirror" >&2
+            download "https://github.com/lua/lua/archive/refs/tags/v$version.tar.gz"
+          fi
+
+          tar xzf "$archive"
+          test -d "lua-$version"
+
+          if [ -d "lua-$version/src" ]; then
+            make -C "lua-$version" posix MYCFLAGS="-DLUA_32BITS"
+            echo "LUA_BIN=$PWD/lua-$version/src/lua" >> "$GITHUB_ENV"
+          else
+            (
+              cd "lua-$version"
+              # The flat tree hardcodes LUA_32BITS 0 in luaconf.h, so the
+              # define has to be edited rather than passed on the command line.
+              sed -i 's/^#define LUA_32BITS[[:space:]]*0$/#define LUA_32BITS 1/' luaconf.h
+              grep -q '^#define LUA_32BITS 1$' luaconf.h
+              cc -O2 -DLUA_USE_POSIX -o lua \
+                $(ls *.c | grep -vE '^(luac|onelua|ltests)\.c$') -lm -ldl
+            )
+            echo "LUA_BIN=$PWD/lua-$version/lua" >> "$GITHUB_ENV"
+          fi
+
+      - name: Assert that the library refuses a 32-bit build
+        run: |
+          set -euo pipefail
+          # Prove the interpreter really is 32-bit before trusting the result.
+          "$LUA_BIN" -e 'assert(math.maxinteger < 78364164095, "expected a 32-bit build")'
+
+          if "$LUA_BIN" -e '
+            package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
+            require("pikaid")
+          ' 2> refusal.txt; then
+            echo "pikaid loaded on a 32-bit integer build" >&2
+            exit 1
+          fi
+
+          cat refusal.txt
+          grep -q "64-bit integers" refusal.txt
 
   quality:
-    name: lint and coverage
+    name: lint, oracle and coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,10 +185,10 @@ jobs:
               ;;
           esac
           echo "line coverage: ${total}%"
-          awk -v total="$total" 'BEGIN { if (total + 0 < 90) { print "coverage below the 90% gate"; exit 1 } }'
+          awk -v total="$total" 'BEGIN { if (total + 0 < 98) { print "coverage below the 98% gate"; exit 1 } }'
 
   package:
-    name: rockspec install
+    name: package and consumer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,20 +199,69 @@ jobs:
 
       - uses: leafo/gh-actions-luarocks@v4
 
-      - name: Install from the rockspec
-        run: luarocks make pikaid-0.1.0-1.rockspec
+      - name: Lint the rockspec
+        run: luarocks lint pikaid-1.0.0-1.rockspec
 
-      - name: Import and generate outside the checkout
+      - name: Install from the rockspec
+        run: luarocks make pikaid-1.0.0-1.rockspec
+
+      - name: Verify the tracked archive is clean
+        run: |
+          set -euo pipefail
+          git archive --format=tar --prefix=archive/ HEAD | tar -t > archive.txt
+          cat archive.txt
+
+          for forbidden in \
+            'archive/.ai/' \
+            'archive/opencode.jsonc' \
+            'archive/.DS_Store' \
+            'archive/luacov.'
+          do
+            if grep -Fq "$forbidden" archive.txt; then
+              echo "forbidden path in the source archive: $forbidden" >&2
+              exit 1
+            fi
+          done
+
+          grep -Fq 'archive/src/pikaid/init.lua' archive.txt
+          grep -Fq 'archive/spec/vectors/pikaid-v1.json' archive.txt
+
+      - name: Run the README quick start against the installed package
         working-directory: ${{ runner.temp }}
         run: |
-          lua -e '
-            local pikaid = require("pikaid")
-            local id = pikaid.generate()
-            assert(pikaid.validate(id), "generated value must validate")
-            assert(#id == 26, "text width")
-            assert(#pikaid.to_binary(id) == 17, "binary width")
-            assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round trip")
-            assert(pikaid.timestamp(id) > 0, "timestamp")
-            assert(#pikaid.randomness(id) == 12, "randomness")
-            print("pikaid " .. pikaid.VERSION .. " ok: " .. id)
-          '
+          set -euo pipefail
+          cat > consumer.lua <<'LUA'
+          local pikaid = require("pikaid")
+
+          assert(pikaid.VERSION == "1.0.0", "installed version")
+
+          local id = "0s44we8002loz3po6mcf6vsn23"
+          assert(pikaid.validate(id), "documented sample validates")
+          assert(pikaid.is_well_formed(id), "documented sample is well formed")
+          assert(pikaid.timestamp(id) == 1700000000, "documented timestamp")
+          assert(#pikaid.to_binary(id) == 17, "binary width")
+          assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round trip")
+
+          local randomness_hex = pikaid.randomness(id):gsub(".", function(c)
+            return string.format("%02x", string.byte(c))
+          end)
+          assert(randomness_hex == "00112233445566778899aabb", "documented randomness")
+
+          local ids = pikaid.new({
+            entropy = function()
+              return string.rep("\0", 12)
+            end,
+            clock = function()
+              return 0
+            end,
+          })
+          assert(ids.generate() == "00000000000000000000000000", "injected providers")
+
+          local generated = pikaid.generate()
+          assert(pikaid.validate(generated), "generated value validates")
+          assert(#generated == 26, "text width")
+          assert(#pikaid.generate_binary() == 17, "binary width")
+
+          print("installed pikaid " .. pikaid.VERSION .. " ok: " .. generated)
+          LUA
+          lua consumer.lua

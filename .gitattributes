@@ -1,0 +1,11 @@
+# Keep every tracked text file byte-identical on every platform. The fixture
+# digests pinned in the test suite depend on LF line endings.
+* text=auto
+
+*.lua      text eol=lf
+*.json     text eol=lf
+*.rockspec text eol=lf
+*.md       text eol=lf
+*.yml      text eol=lf
+*.py       text eol=lf
+*.txt      text eol=lf

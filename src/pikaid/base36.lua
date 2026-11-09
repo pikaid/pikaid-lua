@@ -20,6 +20,18 @@ base36.ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 --- Largest representable timestamp, 36^7 - 1.
 base36.MAX_TIMESTAMP = 78364164095
 
+-- A 32-bit integer build cannot represent MAX_TIMESTAMP and would silently
+-- corrupt the fixed-width arithmetic below. Refuse to load instead of
+-- producing identifiers that are merely plausible.
+if math.maxinteger < base36.MAX_TIMESTAMP then
+  error(
+    "pikaid requires a Lua build with 64-bit integers; this interpreter has "
+      .. "32-bit integers (for example LUA_32BITS), which the pikaid 1.0.4 "
+      .. "format cannot represent exactly",
+    0
+  )
+end
+
 local ALPHABET = base36.ALPHABET
 local DIGIT_VALUES = {}
 

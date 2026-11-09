@@ -17,5 +17,8 @@ luacov.*.out
 *.swp
 .idea/
 .vscode/
+/opencode.jsonc
 
-/.??/
+# Local agent artifacts: strictly repository-local, never committed, and
+# excluded from packages and source archives.
+/.ai/
