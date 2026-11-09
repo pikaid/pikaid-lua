@@ -18,5 +18,4 @@ luacov.*.out
 .idea/
 .vscode/
 
-# Local-only working artifacts (owner policy: never tracked or packaged)
-/.ai/
+/.??/
