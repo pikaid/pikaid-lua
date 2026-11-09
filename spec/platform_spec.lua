@@ -12,11 +12,13 @@ local function load_base36_with_maxinteger(limit)
   local chunk, load_error = loadfile(BASE36_PATH)
   assert(chunk, load_error)
 
+  -- `math.maxinteger` is documented as read-only, so it is written through
+  -- rawset; the interpreter itself reads it from the table at run time.
   local original = math.maxinteger
-  math.maxinteger = limit
+  rawset(math, "maxinteger", limit)
 
   local ok, result = pcall(chunk)
-  math.maxinteger = original
+  rawset(math, "maxinteger", original)
 
   return ok, result
 end
