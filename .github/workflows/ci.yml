@@ -25,7 +25,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         lua: ["5.3.6", "5.4.9", "5.5.1"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Build Lua ${{ matrix.lua }} from source
         run: |
@@ -84,7 +86,9 @@ jobs:
     name: 32-bit integer guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Build Lua 5.4 with 32-bit integers
         run: |
@@ -148,12 +152,14 @@ jobs:
     name: lint, oracle and coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Lua 5.4.9 with retry and mirror fallback
         run: bash ci/install-lua.sh
 
-      - uses: leafo/gh-actions-luarocks@v4
+      - uses: leafo/gh-actions-luarocks@e65774a6386cb4f24e293dca7fc4ff89165b64c5 # v4
 
       - name: Install tooling
         run: |
@@ -197,18 +203,29 @@ jobs:
     name: package and consumer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Lua 5.4.9 with retry and mirror fallback
         run: bash ci/install-lua.sh
 
-      - uses: leafo/gh-actions-luarocks@v4
+      - uses: leafo/gh-actions-luarocks@e65774a6386cb4f24e293dca7fc4ff89165b64c5 # v4
+
+      - name: Generate the current-version rockspec
+        shell: bash
+        run: |
+          set -euo pipefail
+          rockspec="$(python3 ci/prepare-rockspec.py)"
+          version="$(lua -e 'package.path = "./src/?.lua;./src/?/init.lua;" .. package.path; print(require("pikaid").VERSION)')"
+          echo "PIKAID_ROCKSPEC=$rockspec" >> "$GITHUB_ENV"
+          echo "PIKAID_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Lint the rockspec
-        run: luarocks lint pikaid-1.0.0-1.rockspec
+        run: luarocks lint "$PIKAID_ROCKSPEC"
 
       - name: Install from the rockspec
-        run: luarocks make pikaid-1.0.0-1.rockspec
+        run: luarocks make "$PIKAID_ROCKSPEC"
 
       - name: Verify the tracked archive is clean
         run: |
@@ -241,7 +258,7 @@ jobs:
           cat > consumer.lua <<'LUA'
           local pikaid = require("pikaid")
 
-          assert(pikaid.VERSION == "1.0.0", "installed version")
+          assert(pikaid.VERSION == os.getenv("PIKAID_VERSION"), "installed version")
 
           local id = "0s44we8002loz3po6mcf6vsn23"
           assert(pikaid.validate(id), "documented sample validates")
@@ -283,11 +300,14 @@ jobs:
       # cases below and must be identical for every run.
       PIKAID_SPECS_SHA: 059780cc0e5b113443812720d95c630649bf3aa3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Check out the official suite at the pinned commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           repository: pikaid/pikaid-specs
           ref: ${{ env.PIKAID_SPECS_SHA }}
           path: pikaid-specs
@@ -299,7 +319,7 @@ jobs:
           test "$actual" = "$PIKAID_SPECS_SHA"
           echo "suite commit: $actual"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -344,7 +364,7 @@ jobs:
 
       - name: Upload the automated conformance report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: official-conformance-report
           path: ${{ runner.temp }}/official-conformance.json
