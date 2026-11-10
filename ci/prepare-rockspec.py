@@ -43,12 +43,12 @@ def main() -> None:
 
     candidate = replace_one(
         template,
-        r'^version[ \t]*=[ \t]*"[0-9]+\.[0-9]+\.[0-9]+-[0-9]+"[ \t]*,
+        r'^version[ \t]*=[ \t]*"[0-9]+\.[0-9]+\.[0-9]+-[0-9]+"[ \t]*$',
         f'version = "{version}-1"',
     )
     candidate = replace_one(
         candidate,
-        r'^[ \t]*tag[ \t]*=[ \t]*"v[0-9]+\.[0-9]+\.[0-9]+"[ \t]*,?[ \t]*,
+        r'^[ \t]*tag[ \t]*=[ \t]*"v[0-9]+\.[0-9]+\.[0-9]+"[ \t]*,?[ \t]*$',
         f'  tag = "v{version}",',
     )
 
