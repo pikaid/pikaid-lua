@@ -150,11 +150,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: leafo/gh-actions-lua@v10
-        with:
-          # The "5.4" alias resolves to Lua 5.4.4, while the tested
-          # native matrix uses 5.4.9. Pin the same supported patch release.
-          luaVersion: "5.4.9"
+      - name: Install Lua 5.4.9 with retry and mirror fallback
+        run: bash ci/install-lua.sh
 
       - uses: leafo/gh-actions-luarocks@v4
 
@@ -202,9 +199,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: leafo/gh-actions-lua@v10
-        with:
-          luaVersion: "5.4.9"
+      - name: Install Lua 5.4.9 with retry and mirror fallback
+        run: bash ci/install-lua.sh
 
       - uses: leafo/gh-actions-luarocks@v4
 
@@ -307,9 +303,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: leafo/gh-actions-lua@v10
-        with:
-          luaVersion: "5.4.9"
+      - name: Install Lua 5.4.9 with retry and mirror fallback
+        run: bash ci/install-lua.sh
 
       - name: Install suite dependencies
         run: |
