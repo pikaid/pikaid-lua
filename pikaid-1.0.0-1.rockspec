@@ -3,11 +3,10 @@ rockspec_format = "3.0"
 package = "pikaid"
 version = "1.0.0-1"
 
--- The v1.0.0 tag is created at release time and does not exist yet. The
--- immutable tag is recorded here so the uploaded rockspec can only ever build
--- from the reviewed release commit. `luarocks make` ignores this field and
--- builds from the local checkout, which is how CI and contributors install it
--- before the tag exists.
+-- source.tag pins the immutable, reviewed GitHub release.
+-- Repository CI uses `luarocks make`, which builds from the local checkout.
+-- For later releases, ci/prepare-rockspec.py generates the matching version
+-- and source tag without rewriting the published 1.0.0 rockspec.
 source = {
   url = "git+https://github.com/pikaid/pikaid-lua.git",
   tag = "v1.0.0",
