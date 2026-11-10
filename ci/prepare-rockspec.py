@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Produce a release-specific LuaRocks rockspec from the reviewed template."""
+"""Generate the versioned LuaRocks rockspec from the reviewed 1.0.0 template."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def main() -> None:
     args = parser.parse_args()
 
     source = MODULE.read_text(encoding="utf-8")
-    matches = re.findall(r'^\s*pikaid\.VERSION\s*=\s*"([^"]+)"', source, flags=re.MULTILINE)
+    matches = re.findall(r'^[ \t]*pikaid\.VERSION[ \t]*=[ \t]*"([^"]+)"', source, flags=re.MULTILINE)
     if len(matches) != 1 or SEMVER.fullmatch(matches[0]) is None:
         raise ValueError("src/pikaid/init.lua must declare exactly one stable SemVer version")
     version = matches[0]
@@ -36,7 +36,7 @@ def main() -> None:
         raise ValueError(f"Release v{args.version} does not match source version {version}")
 
     template = TEMPLATE.read_text(encoding="utf-8")
-    if len(re.findall(r'^package\s*=\s*"pikaid"\s*$', template, flags=re.MULTILINE)) != 1:
+    if len(re.findall(r'^package[ \t]*=[ \t]*"pikaid"[ \t]*$', template, flags=re.MULTILINE)) != 1:
         raise ValueError("The rockspec template must declare package pikaid")
     if 'url = "git+https://github.com/pikaid/pikaid-lua.git"' not in template:
         raise ValueError("The rockspec template must use the official GitHub source")
@@ -49,76 +49,6 @@ def main() -> None:
     candidate = replace_one(
         candidate,
         r'^[ \t]*tag[ \t]*=[ \t]*"v[0-9]+\.[0-9]+\.[0-9]+"[ \t]*,?[ \t]*$',
-        f'  tag = "v{version}",',
-    )
-
-    target = ROOT / f"pikaid-{version}-1.rockspec"
-    if target.exists():
-        if target.read_text(encoding="utf-8") != candidate:
-            raise ValueError(f"{target.name} exists but does not match the versioned template")
-    else:
-        target.write_text(candidate, encoding="utf-8")
-
-    print(target.name)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (OSError, ValueError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        sys.exit(1)
-,
-        f'version = "{version}-1"',
-    )
-    candidate = replace_one(
-        candidate,
-        r'^\s*tag\s*=\s*"v[0-9]+\.[0-9]+\.[0-9]+"\s*,?\s*$',
-        f'  tag = "v{version}",',
-    )
-
-    target = ROOT / f"pikaid-{version}-1.rockspec"
-    if target.exists():
-        if target.read_text(encoding="utf-8") != candidate:
-            raise ValueError(f"{target.name} exists but does not match the versioned template")
-    else:
-        target.write_text(candidate, encoding="utf-8")
-
-    print(target.name)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (OSError, ValueError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        sys.exit(1)
-,
-        f'  tag = "v{version}",',
-    )
-
-    target = ROOT / f"pikaid-{version}-1.rockspec"
-    if target.exists():
-        if target.read_text(encoding="utf-8") != candidate:
-            raise ValueError(f"{target.name} exists but does not match the versioned template")
-    else:
-        target.write_text(candidate, encoding="utf-8")
-
-    print(target.name)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (OSError, ValueError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        sys.exit(1)
-,
-        f'version = "{version}-1"',
-    )
-    candidate = replace_one(
-        candidate,
-        r'^\s*tag\s*=\s*"v[0-9]+\.[0-9]+\.[0-9]+"\s*,?\s*$',
         f'  tag = "v{version}",',
     )
 
