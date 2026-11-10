@@ -49,7 +49,13 @@ A pikaid contains **26 lowercase Base36 characters**: a **7-character Unix-secon
 
 ## 📦 Installation
 
-The library is not published to LuaRocks yet, so install from a checkout:
+Install the published release from LuaRocks:
+
+```sh
+luarocks install pikaid
+```
+
+To test or install from the repository checkout:
 
 ```sh
 git clone https://github.com/pikaid/pikaid-lua.git
@@ -64,6 +70,29 @@ LUA_PATH='./src/?.lua;./src/?/init.lua;;' lua your_script.lua
 ```
 
 Save the quick start below as `demo.lua`, then run `lua demo.lua` after installation.
+
+## 📤 Automated LuaRocks releases
+
+The [LuaRocks publishing workflow](.github/workflows/publish.yml) validates the
+packaging on pushes to `main` without uploading anything. It also checks the
+repository secret `LUAROCKS_API_KEY` without disclosing it.
+
+To publish a new stable version:
+
+1. Change `pikaid.VERSION` in [`src/pikaid/init.lua`](src/pikaid/init.lua)
+   to the next stable semantic version, then commit the change to `main`.
+2. Confirm that both **CI** and **Security Hardening** succeed for that commit.
+3. Create and publish a GitHub Release with a **new** `vX.Y.Z` tag pointing to
+   that exact commit.
+
+GitHub Actions generates the matching `pikaid-X.Y.Z-1.rockspec` from the
+reviewed template, verifies the tag, CI, rockspec, and installed package, then
+uploads the rockspec and source rock to LuaRocks using the API key. An existing
+published version is never overwritten. Do not move or reuse existing tags.
+
+LuaRocks account settings that require interactive two-factor authentication
+for uploads can prevent unattended publishing; configure an approved
+non-interactive publishing method before relying on this automation.
 
 ## 🚀 Basic Usage
 
