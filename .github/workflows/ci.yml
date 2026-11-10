@@ -106,18 +106,484 @@ jobs:
           tar xzf "$archive"
           test -d "lua-$version"
 
+          # The Lua release tarball and the tagged flat-tree mirror both
+          # define LUA_32BITS as 0 in luaconf.h. A -D flag is overwritten by
+          # that header, producing a false 64-bit build and hiding the guard.
           if [ -d "lua-$version/src" ]; then
-            make -C "lua-$version" posix MYCFLAGS="-DLUA_32BITS"
+            config="lua-$version/src/luaconf.h"
+          else
+            config="lua-$version/luaconf.h"
+          fi
+          test -f "$config"
+          sed -i 's/^#define LUA_32BITS[[:space:]]*0$/#define LUA_32BITS 1/' "$config"
+          grep -q '^#define LUA_32BITS 1
+
+      - name: Assert that the library refuses a 32-bit build
+        run: |
+          set -euo pipefail
+          # Prove the interpreter really is 32-bit before trusting the result.
+          "$LUA_BIN" -e 'assert(math.maxinteger < 78364164095, "expected a 32-bit build")'
+
+          if "$LUA_BIN" -e '
+            package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
+            require("pikaid")
+          ' 2> refusal.txt; then
+            echo "pikaid loaded on a 32-bit integer build" >&2
+            exit 1
+          fi
+
+          cat refusal.txt
+          grep -q "64-bit integers" refusal.txt
+
+  quality:
+    name: lint, oracle and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          # The "5.4" alias resolves to Lua 5.4.4, while the tested
+          # native matrix uses 5.4.9. Pin the same supported patch release.
+          luaVersion: "5.4.9"
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Install tooling
+        run: |
+          luarocks install luacheck
+          luarocks install luacov
+
+      - name: Lint
+        run: luacheck src spec
+
+      - name: Verify the independent oracle fixture
+        run: |
+          set -euo pipefail
+          python3 spec/tools/generate_reference_cases.py
+          git diff --exit-code -- spec/fixtures/reference-cases.json
+
+      - name: Coverage
+        run: |
+          set -euo pipefail
+          # The LuaRocks action exports its install tree through LUA_PATH. Keep
+          # that path mounted so `-lluacov` resolves, then prepend the source
+          # directories used by the suite.
+          eval "$(luarocks path)"
+          LUA_PATH="./src/?.lua;./src/?/init.lua;${LUA_PATH:-}" lua -lluacov spec/run.lua
+          luacov
+          sed -n '/^Summary/,$p' luacov.report.out
+          total=$(awk '/^Total[[:space:]]/{print $4}' luacov.report.out | tr -d '%')
+          if [ -z "$total" ]; then
+            echo "could not read the coverage total" >&2
+            exit 1
+          fi
+          case "$total" in
+            ''|*[!0-9.]*)
+              echo "invalid coverage total: $total" >&2
+              exit 1
+              ;;
+          esac
+          echo "line coverage: ${total}%"
+          awk -v total="$total" 'BEGIN { if (total + 0 < 98) { print "coverage below the 98% gate"; exit 1 } }'
+
+  package:
+    name: package and consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4.9"
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Lint the rockspec
+        run: luarocks lint pikaid-1.0.0-1.rockspec
+
+      - name: Install from the rockspec
+        run: luarocks make pikaid-1.0.0-1.rockspec
+
+      - name: Verify the tracked archive is clean
+        run: |
+          set -euo pipefail
+          git archive --format=tar --prefix=archive/ HEAD | tar -t > archive.txt
+          cat archive.txt
+
+          for forbidden in \
+            'archive/.ai/' \
+            'archive/opencode.jsonc' \
+            'archive/.DS_Store' \
+            'archive/luacov.'
+          do
+            if grep -Fq "$forbidden" archive.txt; then
+              echo "forbidden path in the source archive: $forbidden" >&2
+              exit 1
+            fi
+          done
+
+          grep -Fq 'archive/src/pikaid/init.lua' archive.txt
+          grep -Fq 'archive/spec/vectors/pikaid-v1.json' archive.txt
+          # The test-only official-suite bridge is source-controlled, but it is
+          # not part of the installed library (see the rockspec module list).
+          grep -Fq 'archive/spec/tools/jsonl_adapter.lua' archive.txt
+
+      - name: Run the README quick start against the installed package
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          cat > consumer.lua <<'LUA'
+          local pikaid = require("pikaid")
+
+          assert(pikaid.VERSION == "1.0.0", "installed version")
+
+          local id = "0s44we8002loz3po6mcf6vsn23"
+          assert(pikaid.validate(id), "documented sample validates")
+          assert(pikaid.is_well_formed(id), "documented sample is well formed")
+          assert(pikaid.timestamp(id) == 1700000000, "documented timestamp")
+          assert(#pikaid.to_binary(id) == 17, "binary width")
+          assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round trip")
+
+          local randomness_hex = pikaid.randomness(id):gsub(".", function(c)
+            return string.format("%02x", string.byte(c))
+          end)
+          assert(randomness_hex == "00112233445566778899aabb", "documented randomness")
+
+          local ids = pikaid.new({
+            entropy = function()
+              return string.rep("\0", 12)
+            end,
+            clock = function()
+              return 0
+            end,
+          })
+          assert(ids.generate() == "00000000000000000000000000", "injected providers")
+
+          local generated = pikaid.generate()
+          assert(pikaid.validate(generated), "generated value validates")
+          assert(#generated == 26, "text width")
+          assert(#pikaid.generate_binary() == 17, "binary width")
+
+          print("installed pikaid " .. pikaid.VERSION .. " ok: " .. generated)
+          LUA
+          lua consumer.lua
+
+  official-suite:
+    name: official conformance suite (automated)
+    runs-on: ubuntu-latest
+    env:
+      # Immutable upstream fixture revision. Changing this SHA is a reviewed
+      # change, never a floating branch: the suite is the authority for the
+      # cases below and must be identical for every run.
+      PIKAID_SPECS_SHA: 059780cc0e5b113443812720d95c630649bf3aa3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the official suite at the pinned commit
+        uses: actions/checkout@v4
+        with:
+          repository: pikaid/pikaid-specs
+          ref: ${{ env.PIKAID_SPECS_SHA }}
+          path: pikaid-specs
+
+      - name: Assert the suite checkout is exactly the pinned commit
+        run: |
+          set -euo pipefail
+          actual="$(git -C pikaid-specs rev-parse HEAD)"
+          test "$actual" = "$PIKAID_SPECS_SHA"
+          echo "suite commit: $actual"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4.9"
+
+      - name: Install suite dependencies
+        run: |
+          set -euo pipefail
+          # The suite's only third-party dependency; pinned so a new upstream
+          # release cannot change validation behaviour between runs.
+          python3 -m pip install --disable-pip-version-check jsonschema==4.26.0
+
+      - name: Verify fixture integrity and vector digests
+        working-directory: pikaid-specs/conformance
+        run: |
+          set -euo pipefail
+          python3 tools/verify_vectors.py \
+            --expect-status OFFICIAL \
+            --expect-package-revision 1.0.0 \
+            --expect-spec-revision 1.0.4
+
+      - name: Run the official verifier unit tests
+        working-directory: pikaid-specs/conformance
+        run: python3 -m unittest discover -s tools/tests -v
+
+      - name: Run the independent Node oracle
+        working-directory: pikaid-specs/conformance
+        run: node tools/verify_oracle_node.mjs
+
+      - name: Run the JSONL adapter against the official suite
+        working-directory: pikaid-specs/conformance
+        run: |
+          set -euo pipefail
+          # `--automated-only` exits 0 only when every automated check passes.
+          # The manual security audits stay outstanding, so this step proves
+          # automated conformance, not a certification.
+          python3 tools/run_adapter.py \
+            --automated-only \
+            --report-json "$RUNNER_TEMP/official-conformance.json" \
+            -- lua "$GITHUB_WORKSPACE/spec/tools/jsonl_adapter.lua"
+
+      - name: Upload the automated conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-conformance-report
+          path: ${{ runner.temp }}/official-conformance.json
+          if-no-files-found: warn
+ "$config"
+
+          if [ -d "lua-$version/src" ]; then
+            make -C "lua-$version" posix
             echo "LUA_BIN=$PWD/lua-$version/src/lua" >> "$GITHUB_ENV"
           else
             (
               cd "lua-$version"
-              # The flat tree hardcodes LUA_32BITS 0 in luaconf.h, so the
-              # define has to be edited rather than passed on the command line.
-              sed -i 's/^#define LUA_32BITS[[:space:]]*0$/#define LUA_32BITS 1/' luaconf.h
-              grep -q '^#define LUA_32BITS 1$' luaconf.h
               cc -O2 -DLUA_USE_POSIX -o lua \
-                $(ls *.c | grep -vE '^(luac|onelua|ltests)\.c$') -lm -ldl
+                $(ls *.c | grep -vE '^(luac|onelua|ltests)\.c
+
+      - name: Assert that the library refuses a 32-bit build
+        run: |
+          set -euo pipefail
+          # Prove the interpreter really is 32-bit before trusting the result.
+          "$LUA_BIN" -e 'assert(math.maxinteger < 78364164095, "expected a 32-bit build")'
+
+          if "$LUA_BIN" -e '
+            package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
+            require("pikaid")
+          ' 2> refusal.txt; then
+            echo "pikaid loaded on a 32-bit integer build" >&2
+            exit 1
+          fi
+
+          cat refusal.txt
+          grep -q "64-bit integers" refusal.txt
+
+  quality:
+    name: lint, oracle and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          # The "5.4" alias resolves to Lua 5.4.4, while the tested
+          # native matrix uses 5.4.9. Pin the same supported patch release.
+          luaVersion: "5.4.9"
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Install tooling
+        run: |
+          luarocks install luacheck
+          luarocks install luacov
+
+      - name: Lint
+        run: luacheck src spec
+
+      - name: Verify the independent oracle fixture
+        run: |
+          set -euo pipefail
+          python3 spec/tools/generate_reference_cases.py
+          git diff --exit-code -- spec/fixtures/reference-cases.json
+
+      - name: Coverage
+        run: |
+          set -euo pipefail
+          # The LuaRocks action exports its install tree through LUA_PATH. Keep
+          # that path mounted so `-lluacov` resolves, then prepend the source
+          # directories used by the suite.
+          eval "$(luarocks path)"
+          LUA_PATH="./src/?.lua;./src/?/init.lua;${LUA_PATH:-}" lua -lluacov spec/run.lua
+          luacov
+          sed -n '/^Summary/,$p' luacov.report.out
+          total=$(awk '/^Total[[:space:]]/{print $4}' luacov.report.out | tr -d '%')
+          if [ -z "$total" ]; then
+            echo "could not read the coverage total" >&2
+            exit 1
+          fi
+          case "$total" in
+            ''|*[!0-9.]*)
+              echo "invalid coverage total: $total" >&2
+              exit 1
+              ;;
+          esac
+          echo "line coverage: ${total}%"
+          awk -v total="$total" 'BEGIN { if (total + 0 < 98) { print "coverage below the 98% gate"; exit 1 } }'
+
+  package:
+    name: package and consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4.9"
+
+      - uses: leafo/gh-actions-luarocks@v4
+
+      - name: Lint the rockspec
+        run: luarocks lint pikaid-1.0.0-1.rockspec
+
+      - name: Install from the rockspec
+        run: luarocks make pikaid-1.0.0-1.rockspec
+
+      - name: Verify the tracked archive is clean
+        run: |
+          set -euo pipefail
+          git archive --format=tar --prefix=archive/ HEAD | tar -t > archive.txt
+          cat archive.txt
+
+          for forbidden in \
+            'archive/.ai/' \
+            'archive/opencode.jsonc' \
+            'archive/.DS_Store' \
+            'archive/luacov.'
+          do
+            if grep -Fq "$forbidden" archive.txt; then
+              echo "forbidden path in the source archive: $forbidden" >&2
+              exit 1
+            fi
+          done
+
+          grep -Fq 'archive/src/pikaid/init.lua' archive.txt
+          grep -Fq 'archive/spec/vectors/pikaid-v1.json' archive.txt
+          # The test-only official-suite bridge is source-controlled, but it is
+          # not part of the installed library (see the rockspec module list).
+          grep -Fq 'archive/spec/tools/jsonl_adapter.lua' archive.txt
+
+      - name: Run the README quick start against the installed package
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          cat > consumer.lua <<'LUA'
+          local pikaid = require("pikaid")
+
+          assert(pikaid.VERSION == "1.0.0", "installed version")
+
+          local id = "0s44we8002loz3po6mcf6vsn23"
+          assert(pikaid.validate(id), "documented sample validates")
+          assert(pikaid.is_well_formed(id), "documented sample is well formed")
+          assert(pikaid.timestamp(id) == 1700000000, "documented timestamp")
+          assert(#pikaid.to_binary(id) == 17, "binary width")
+          assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round trip")
+
+          local randomness_hex = pikaid.randomness(id):gsub(".", function(c)
+            return string.format("%02x", string.byte(c))
+          end)
+          assert(randomness_hex == "00112233445566778899aabb", "documented randomness")
+
+          local ids = pikaid.new({
+            entropy = function()
+              return string.rep("\0", 12)
+            end,
+            clock = function()
+              return 0
+            end,
+          })
+          assert(ids.generate() == "00000000000000000000000000", "injected providers")
+
+          local generated = pikaid.generate()
+          assert(pikaid.validate(generated), "generated value validates")
+          assert(#generated == 26, "text width")
+          assert(#pikaid.generate_binary() == 17, "binary width")
+
+          print("installed pikaid " .. pikaid.VERSION .. " ok: " .. generated)
+          LUA
+          lua consumer.lua
+
+  official-suite:
+    name: official conformance suite (automated)
+    runs-on: ubuntu-latest
+    env:
+      # Immutable upstream fixture revision. Changing this SHA is a reviewed
+      # change, never a floating branch: the suite is the authority for the
+      # cases below and must be identical for every run.
+      PIKAID_SPECS_SHA: 059780cc0e5b113443812720d95c630649bf3aa3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the official suite at the pinned commit
+        uses: actions/checkout@v4
+        with:
+          repository: pikaid/pikaid-specs
+          ref: ${{ env.PIKAID_SPECS_SHA }}
+          path: pikaid-specs
+
+      - name: Assert the suite checkout is exactly the pinned commit
+        run: |
+          set -euo pipefail
+          actual="$(git -C pikaid-specs rev-parse HEAD)"
+          test "$actual" = "$PIKAID_SPECS_SHA"
+          echo "suite commit: $actual"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4.9"
+
+      - name: Install suite dependencies
+        run: |
+          set -euo pipefail
+          # The suite's only third-party dependency; pinned so a new upstream
+          # release cannot change validation behaviour between runs.
+          python3 -m pip install --disable-pip-version-check jsonschema==4.26.0
+
+      - name: Verify fixture integrity and vector digests
+        working-directory: pikaid-specs/conformance
+        run: |
+          set -euo pipefail
+          python3 tools/verify_vectors.py \
+            --expect-status OFFICIAL \
+            --expect-package-revision 1.0.0 \
+            --expect-spec-revision 1.0.4
+
+      - name: Run the official verifier unit tests
+        working-directory: pikaid-specs/conformance
+        run: python3 -m unittest discover -s tools/tests -v
+
+      - name: Run the independent Node oracle
+        working-directory: pikaid-specs/conformance
+        run: node tools/verify_oracle_node.mjs
+
+      - name: Run the JSONL adapter against the official suite
+        working-directory: pikaid-specs/conformance
+        run: |
+          set -euo pipefail
+          # `--automated-only` exits 0 only when every automated check passes.
+          # The manual security audits stay outstanding, so this step proves
+          # automated conformance, not a certification.
+          python3 tools/run_adapter.py \
+            --automated-only \
+            --report-json "$RUNNER_TEMP/official-conformance.json" \
+            -- lua "$GITHUB_WORKSPACE/spec/tools/jsonl_adapter.lua"
+
+      - name: Upload the automated conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-conformance-report
+          path: ${{ runner.temp }}/official-conformance.json
+          if-no-files-found: warn
+) -lm -ldl
             )
             echo "LUA_BIN=$PWD/lua-$version/lua" >> "$GITHUB_ENV"
           fi
