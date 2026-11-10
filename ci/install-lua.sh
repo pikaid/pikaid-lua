@@ -28,7 +28,7 @@ mkdir -p "$prefix/bin" "$prefix/include" "$prefix/lib"
 if [[ -d "$source_dir/src" ]]; then
   # Official release tarball: install the built interpreter, headers and lib.
   # POSIX-only builds cannot load LuaRocks C modules (for example lfs.so).
-  make -C "$source_dir" posix MYCFLAGS="-DLUA_USE_DLOPEN" MYLIBS="-ldl"
+  make -C "$source_dir" posix MYCFLAGS="-DLUA_USE_DLOPEN" MYLDFLAGS="-Wl,-E" MYLIBS="-ldl"
   make -C "$source_dir" install INSTALL_TOP="$prefix"
 else
   # The tagged GitHub mirror has a flat C source tree and no release Makefile.
