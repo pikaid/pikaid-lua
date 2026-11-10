@@ -1,45 +1,53 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pikaid/pikaid-specs/v1.0.4/logo.png" alt="pikaid" width="300" />
+  <a href="https://github.com/pikaid/pikaid-specs">
+    <img src="https://raw.githubusercontent.com/pikaid/pikaid-specs/v1.0.4/logo.png" alt="pikaid" width="300">
+  </a>
 </p>
 
 <p align="center">
   <strong>Small · Sortable · Secure ID generator</strong>
 </p>
 
-# pikaid — Official Lua Implementation
+<div align="center">
 
-**Status: implementation 1.0.0 is complete against specification 1.0.4 and not yet published to LuaRocks.**
-See [CHANGELOG.md](CHANGELOG.md) for the release notes.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Lua](https://img.shields.io/badge/language-Lua-2C2D72.svg)](https://github.com/pikaid/pikaid-lua)
+[![CI](https://github.com/pikaid/pikaid-lua/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pikaid/pikaid-lua/actions/workflows/ci.yml)
+[![Official implementation](https://img.shields.io/badge/official-implementation-2e7d32.svg)](https://github.com/pikaid/pikaid-specs)
+[![Specification 1.0.4](https://img.shields.io/badge/spec-1.0.4-4b56a6.svg)](https://github.com/pikaid/pikaid-specs/tree/v1.0.4)
 
-This repository contains the **official Lua implementation** of [pikaid](https://github.com/pikaid), a compact, chronologically sortable, collision-resistant identifier format for databases, APIs, and distributed systems.
+</div>
 
-The pikaid identifier format is immutable and unversioned: **26 lowercase Base36 characters** with a **17-byte binary representation**.
+**pikaid** is the **official Lua implementation** of a compact, chronologically sortable, collision-resistant identifier format for databases, APIs, and distributed systems.
 
-## Canonical specification
+This is the immutable, unversioned [pikaid format](https://github.com/pikaid/pikaid-specs/tree/v1.0.4), documented in specification revision **1.0.4**.
 
-The authoritative definition is [pikaid specification revision 1.0.4](https://github.com/pikaid/pikaid-specs/tree/v1.0.4).
+## ✨ Why pikaid?
 
-This implementation targets that revision exactly. It does not extend the format, and it does not invent a version prefix, checksum, or alternate alphabet.
+- **Short:** Compact, readable IDs for URLs, logs, and API resources.
+- **Sortable:** Lexicographically ordered by timestamp, with **one-second precision**.
+- **Collision-resistant:** 96 bits of cryptographic randomness make collisions extremely unlikely, never impossible.
+- **Storage-friendly:** Use `BINARY(17)` or readable `CHAR(26)`.
+- **Distributed-friendly:** No central sequence generator or coordination required.
 
-## Features
+## 🧬 Identifier format
 
-- **Exact format.** 26 lowercase Base36 characters: 7 timestamp digits and 19 randomness digits carrying 96 bits.
-- **Lossless binary form.** 17 bytes: 5 unsigned big-endian timestamp bytes and the 12 randomness bytes unchanged.
-- **Strict validation.** No trimming, case folding, truncation, or silent coercion; malformed input is rejected with a typed error.
-- **Cryptographic generation.** Randomness comes from the operating system CSPRNG, never from `math.random`.
-- **Fail-closed.** If entropy or the clock is unavailable, generation raises instead of returning a weaker identifier.
-- **Injectable providers.** Supply your own verified CSPRNG and clock for tests, sandboxes, or unsupported platforms.
-- **Locale-independent comparison.** Ordering uses unsigned byte comparison rather than Lua's locale-sensitive `<`.
-- **No dependencies.** Pure Lua 5.3+, using only the standard library.
+A pikaid contains **26 lowercase Base36 characters**: a **7-character Unix-seconds timestamp** followed by **19 characters encoding 96 bits of cryptographic randomness**. Its binary form is **17 bytes**: 5 unsigned big-endian timestamp bytes followed by 12 randomness bytes.
 
-## Requirements
+![Identifier structure](https://raw.githubusercontent.com/pikaid/pikaid-specs/v1.0.4/structure.svg)
+
+> **Ordering:** Different seconds sort chronologically. Within the same second, randomness—not issuance order—decides the order.
+
+> **Security:** These are identifiers, **not secrets**, session credentials, authentication tokens, or API keys.
+
+## ⚙️ Requirements
 
 - **Lua 5.3, 5.4, or 5.5** from PUC-Rio. The implementation needs the integer subtype, the `//` operator, and `math.type`. It does **not** support Lua 5.1, Lua 5.2, or LuaJIT.
 - A standard 64-bit-integer build. The timestamp range exceeds 32-bit integers, so a `LUA_32BITS` interpreter is rejected when the module loads instead of silently producing corrupt identifiers.
 - On Linux and macOS, a readable `/dev/urandom`. The same device path is used on the BSDs, where it has the same semantics, but CI does not run on BSD.
 - On other platforms, including Windows, a verified entropy provider passed to `pikaid.new`. Generation fails closed rather than falling back to a weaker source.
 
-## Installation
+## 📦 Installation
 
 The library is not published to LuaRocks yet, so install from a checkout:
 
@@ -55,35 +63,36 @@ Without LuaRocks, put `src/` on `package.path`:
 LUA_PATH='./src/?.lua;./src/?/init.lua;;' lua your_script.lua
 ```
 
-## Quick start
+Save the quick start below as `demo.lua`, then run `lua demo.lua` after installation.
+
+## 🚀 Basic Usage
 
 ```lua
 local pikaid = require("pikaid")
 
 local id = pikaid.generate()
--- "0s44we8002loz3po6mcf6vsn23"
-
-pikaid.validate(id)            --> true
-pikaid.is_well_formed(id)      --> true
-pikaid.timestamp(id)           --> 1700000000
-pikaid.randomness(id)          --> 12 raw bytes
-
-local parsed = pikaid.parse(id)
--- { timestamp = 1700000000,
---   randomness = <12 raw bytes, hex 00112233445566778899aabb>,
---   randomness_hex = "00112233445566778899aabb" }
-
-local binary = pikaid.to_binary(id)      -- exactly 17 bytes
-local restored = pikaid.from_binary(binary)
-assert(restored == id)
-
-local ok, err = pikaid.try_parse("not a pikaid")
--- ok  == nil
--- err == { code = "invalid_length", message = "..." }
-print(tostring(err))  --> "pikaid: invalid_length: ..."
+assert(pikaid.validate(id))
+assert(pikaid.is_well_formed(id))
+local binary = pikaid.to_binary(id)
+assert(#binary == 17)
+assert(pikaid.from_binary(binary) == id)
+print(id, pikaid.timestamp(id))
 ```
 
-## API
+The identifier varies on every call; the timestamp is the current Unix second.
+
+## 💡 Example Use Case
+
+Use pikaid to identify **users, orders, invoices, uploads, events, and API resources**. Independent services can generate compact IDs without a shared counter, while timestamp-based ordering helps with indexing, sorting, and logs.
+
+## 📚 Canonical specification
+
+- [Canonical specification](https://github.com/pikaid/pikaid-specs)
+- [Revision 1.0.4](https://github.com/pikaid/pikaid-specs/tree/v1.0.4)
+
+Specification revisions describe the format; they do not change the encoded identifiers.
+
+## 🧩 API Reference
 
 ### Generation
 
@@ -165,16 +174,7 @@ Error codes:
 
 `pikaid.VERSION` is the library version; the identifier format itself is unversioned.
 
-## Binary representation
-
-| Offset | Length | Contents |
-| --- | --- | --- |
-| `0` | 5 | timestamp, unsigned big-endian, `0 .. 78364164095` (`36^7 - 1`) |
-| `5` | 12 | randomness bytes, unchanged |
-
-The text and binary forms are lossless translations of each other. Leading zeroes are always preserved.
-
-## Ordering
+## 🔄 Order Guarantee
 
 Valid identifiers with different timestamps sort chronologically in both forms, because the timestamp occupies the most significant digits and the most significant bytes.
 
@@ -184,17 +184,23 @@ Two identifiers created within the same second have a random relative order. **G
 
 When storing text identifiers in a database, use an ASCII-compatible collation. A case-insensitive or language-aware collation can change the ordering of the Base36 alphabet.
 
-## Security notes
+## 🛢 Storage Recommendations
 
-pikaid identifiers are **identifiers**, not secrets:
+| Representation | Size | Recommended for |
+| --- | ---: | --- |
+| **BINARY(17)** | 17 bytes | Compact primary keys and indexes |
+| **CHAR(26)** | 26 characters | Readable SQL, debugging, URLs, and logs |
 
-- 96 bits of randomness make accidental collisions negligible, but uniqueness remains probabilistic. Nothing in the format guarantees that two independently generated identifiers differ.
-- Identifiers are not authentication tokens, session keys, passwords, or capability grants. They are not encrypted and carry no signature; the timestamp is readable by anyone.
-- Randomness is unpredictable only when the entropy provider is cryptographic. `math.random` is not, and this library never uses it. The built-in provider reads `/dev/urandom`; on platforms without it, generation fails instead of degrading.
-- The timestamp leaks the creation second. Do not generate identifiers for data whose creation time is sensitive.
-- Timestamps come from the wall clock, which can move backwards. Identifiers remain valid; their order simply reflects the clock value that was recorded.
+Use an **ASCII bytewise/binary collation** for text columns (for example, `ascii_bin` on MariaDB/MySQL). Case-insensitive or locale-aware sorting is not a substitute for canonical bytewise comparison.
 
-## Platform support
+## ✅ Verification and release status
+
+The [CI workflow](https://github.com/pikaid/pikaid-lua/actions/workflows/ci.yml) runs native tests, pinned automated conformance checks, and language-specific quality gates. To run the native checks locally from a checkout, use `lua spec/run.lua`.
+
+**Automated passing tests are not a security certification.** The independent CSPRNG source and failure-path audits (`P-GENERATE-RNG-SOURCE` and `P-GENERATE-RNG-FAILURE`) still require separate human evidence.
+
+<details>
+<summary>Platform, tooling, and conformance details</summary>
 
 | Platform | Default entropy source | Notes |
 | --- | --- | --- |
@@ -202,8 +208,6 @@ pikaid identifiers are **identifiers**, not secrets:
 | macOS | `/dev/urandom` | supported; exercised by CI |
 | BSD | `/dev/urandom` | expected to work by the same device contract; not exercised by CI |
 | Windows | none | supply `options.entropy`; generation fails closed otherwise; not exercised by CI |
-
-## Development
 
 Run the conformance suite:
 
@@ -259,18 +263,43 @@ Continuous integration runs the same suite on Linux and macOS against Lua 5.3, 5
 
 The Windows and BSD default entropy paths are not exercised by CI: Windows has no `/dev/urandom`, so Windows callers must inject a verified provider, while BSD is expected to work through the same `/dev/urandom` contract as Linux and macOS. The generation logic itself is platform-independent, and a missing or failing provider always raises instead of degrading.
 
-## Release and security review
-
 - [RELEASING.md](RELEASING.md) — non-destructive tag, build and publish runbook.
 - [`docs/csprng-review-packet.md`](https://github.com/pikaid/pikaid-lua/blob/main/docs/csprng-review-packet.md)
   — file/line map for the two manual CSPRNG audits
   (`P-GENERATE-RNG-SOURCE`, `P-GENERATE-RNG-FAILURE`). Automated conformance
   does not substitute for the independent human review.
 
-## Interoperability
-
 `spec/vectors/pikaid-v1.json` and `spec/vectors/pikaid-v1.schema.json` are copied unmodified from the pikaid-php `v1.2.0` release at commit `e3f843edeb5157a5d2d25196cac0d69580810a95`; their provenance and hashes are recorded in `spec/vectors/README.md`. They implement the rules of pikaid specification revision `1.0.4` (commit `17014d76f568c3ac9f9ce2927c1a018fdbc36d1d`), which remains the normative source. The PHP fixtures are interoperability data, not the normative definition.
 
-## License
+</details>
 
-[MIT](LICENSE) © 2026 larananas (Lara G.)
+Registry publication is not implied by a green CI: use the installation method documented above.
+
+## 🤝 Contributing
+
+Contributions are always welcome! 💙
+
+Whether you're fixing a typo, improving documentation, adding tests, or making pikaid even better, every contribution is appreciated.
+
+**Want to help? Here's how:**
+
+- 🐛 **Found a bug?** [Open an issue](https://github.com/pikaid/pikaid-lua/issues) with clear reproduction steps.
+- 💡 **Have an idea?** Start with an issue before making major changes.
+- 🛠️ **Ready to contribute?** Open a pull request explaining your changes.
+- 🧪 **Keep it tested.** Add meaningful regression tests for behavior changes and follow the existing conventions.
+- ✅ **Make sure CI passes.** All required checks must be green before a pull request is merged. No shortcuts!
+
+**One important rule:** pikaid's identifier format is immutable. Contributions must preserve the [canonical specification (revision 1.0.4)](https://github.com/pikaid/pikaid-specs/tree/v1.0.4).
+
+🔐 **Found a security vulnerability?** Report it privately using GitHub's security reporting (when available), or [contact the maintainer](mailto:larananas.dev@proton.me)—not through a public issue.
+
+**Every improvement matters, big or small. Thanks for helping make pikaid better!** 🐇
+
+## 📄 License
+
+The implementation is available under the [MIT License](LICENSE).
+
+## ✉️ Contact
+
+For licensing or project-related questions: [larananas.dev@proton.me](mailto:larananas.dev@proton.me).
+
