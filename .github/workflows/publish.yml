@@ -1,0 +1,277 @@
+name: Publish to LuaRocks
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: luarocks-${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify version, CI and rockspec
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      rockspec: ${{ steps.package.outputs.rockspec }}
+    steps:
+      - name: Check out the exact release commit or pushed main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'release' && format('refs/tags/{0}', github.event.release.tag_name) || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify stable GitHub release and full CI
+        if: ${{ github.event_name == 'release' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Only stable SemVer releases (vX.Y.Z) may publish to LuaRocks."
+            exit 1
+          fi
+
+          published="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease \
+            --jq 'select(.isDraft == false and .isPrerelease == false) | .tagName')"
+          test "$published" = "$RELEASE_TAG" || {
+            echo "::error::A published, non-prerelease GitHub release is required."
+            exit 1
+          }
+
+          sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$sha" origin/main || {
+            echo "::error::Release tag must point to a commit contained in main."
+            exit 1
+          }
+
+          for workflow in ci.yml security-hardening.yml; do
+            conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
+              --jq "[.workflow_runs[] | select(.path == \".github/workflows/$workflow\" and .event == \"push\" and .head_branch == \"main\")] | sort_by(.created_at) | last | .conclusion // \"\"")"
+            if [[ "$conclusion" != "success" ]]; then
+              echo "::error::The $workflow main-branch workflow must be successful at $sha (found: ${conclusion:-none})."
+              exit 1
+            fi
+          done
+
+      - name: Prepare the release-specific rockspec
+        id: package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$RELEASE_TAG" ]]; then
+            version="${RELEASE_TAG#v}"
+            rockspec="$(python3 ci/prepare-rockspec.py --version "$version")"
+          else
+            rockspec="$(python3 ci/prepare-rockspec.py)"
+            version="${rockspec#pikaid-}"
+            version="${version%-1.rockspec}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "rockspec=$rockspec" >> "$GITHUB_OUTPUT"
+          echo "Prepared $rockspec for v$version"
+
+      - name: Install pinned Lua 5.4
+        run: bash ci/install-lua.sh
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@e65774a6386cb4f24e293dca7fc4ff89165b64c5 # v4
+
+      - name: Lint, install and test the rockspec
+        shell: bash
+        env:
+          ROCKSPEC: ${{ steps.package.outputs.rockspec }}
+          EXPECTED_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          luarocks lint "$ROCKSPEC"
+          luarocks make "$ROCKSPEC"
+          eval "$(luarocks path)"
+          (
+            cd "$RUNNER_TEMP"
+            lua -e '
+              local pikaid = require("pikaid")
+              assert(pikaid.VERSION == os.getenv("EXPECTED_VERSION"), "installed library version mismatch")
+              local id = pikaid.generate()
+              assert(pikaid.validate(id), "installed library cannot generate valid identifiers")
+              assert(#pikaid.to_binary(id) == 17, "binary round-trip contract broken")
+              assert(pikaid.from_binary(pikaid.to_binary(id)) == id, "round-trip failed")
+            '
+          )
+          echo "Packaged LuaRocks installation and consumer smoke test succeeded."
+
+  key-check:
+    name: Verify LuaRocks API key (no publication)
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check LuaRocks API key without exposing it
+        env:
+          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError, URLError
+
+          key = os.environ.get("LUAROCKS_API_KEY", "")
+          if not key:
+              sys.exit("::error::Repository secret LUAROCKS_API_KEY is missing.")
+          request = Request(
+              "https://luarocks.org/api/1/bearer/status",
+              headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+          )
+          try:
+              with urlopen(request, timeout=30) as response:
+                  payload = json.load(response)
+          except (HTTPError, URLError, ValueError):
+              sys.exit("::error::LuaRocks API authentication failed. Check the secret or account permissions.")
+          if not isinstance(payload.get("user_id"), int):
+              sys.exit("::error::LuaRocks returned no valid account ID.")
+          print("LuaRocks API authentication is valid; no package was published.")
+          PY
+
+  publish:
+    name: Publish new version to LuaRocks
+    if: ${{ github.event_name == 'release' }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the verified release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Prepare the exact rockspec again
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+          EXPECTED_ROCKSPEC: ${{ needs.verify.outputs.rockspec }}
+        run: |
+          set -euo pipefail
+          generated="$(python3 ci/prepare-rockspec.py --version "$EXPECTED_VERSION")"
+          test "$generated" = "$EXPECTED_ROCKSPEC" || {
+            echo "::error::Verified rockspec and publication rockspec differ."
+            exit 1
+          }
+
+      - name: Install pinned Lua 5.4
+        run: bash ci/install-lua.sh
+
+      - name: Install LuaRocks
+        uses: leafo/gh-actions-luarocks@e65774a6386cb4f24e293dca7fc4ff89165b64c5 # v4
+
+      - name: Check registry version (prevent overwrite)
+        id: existing
+        env:
+          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError, URLError
+
+          key = os.environ.get("LUAROCKS_API_KEY", "")
+          if not key:
+              sys.exit("::error::Repository secret LUAROCKS_API_KEY is missing.")
+          version = os.environ["EXPECTED_VERSION"] + "-1"
+          query = urlencode({"package": "pikaid", "version": version})
+          request = Request(
+              "https://luarocks.org/api/1/bearer/check_rockspec?" + query,
+              headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+          )
+          try:
+              with urlopen(request, timeout=30) as response:
+                  result = json.load(response)
+          except (HTTPError, URLError, ValueError):
+              sys.exit("::error::Could not verify existing version on LuaRocks.")
+          existing = result.get("version")
+          if existing is not None and existing.get("version_name") != version:
+              sys.exit("::error::LuaRocks returned a different version from the one requested.")
+          found = "true" if existing else "false"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("already_exists=" + found + "\n")
+          print(("Already published; skipping the upload: " if existing else "New release ready: ") + version)
+          PY
+
+      - name: Publish rockspec and source rock
+        if: ${{ steps.existing.outputs.already_exists == 'false' }}
+        env:
+          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+          ROCKSPEC: ${{ needs.verify.outputs.rockspec }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LUAROCKS_API_KEY" || {
+            echo "::error::LuaRocks API key is missing."
+            exit 1
+          }
+          # LuaRocks packs the immutable Git source before uploading.
+          # GitHub masks the secret passed via the action environment.
+          luarocks upload "$ROCKSPEC" --api-key="$LUAROCKS_API_KEY"
+
+      - name: Verify published version on LuaRocks
+        env:
+          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError, URLError
+
+          version = os.environ["EXPECTED_VERSION"] + "-1"
+          key = os.environ.get("LUAROCKS_API_KEY", "")
+          if not key:
+              sys.exit("::error::LuaRocks API key is missing.")
+          query = urlencode({"package": "pikaid", "version": version})
+          request = Request(
+              "https://luarocks.org/api/1/bearer/check_rockspec?" + query,
+              headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+          )
+          for attempt in range(12):
+              try:
+                  with urlopen(request, timeout=30) as response:
+                      payload = json.load(response)
+                  remote = payload.get("version")
+                  if isinstance(remote, dict) and remote.get("version_name") == version:
+                      print("LuaRocks confirms pikaid " + version)
+                      sys.exit(0)
+              except (HTTPError, URLError, ValueError):
+                  pass
+              if attempt < 11:
+                  time.sleep(10)
+          sys.exit("::error::LuaRocks has not confirmed the new version.")
+          PY
