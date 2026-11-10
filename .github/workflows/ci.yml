@@ -147,7 +147,9 @@ jobs:
 
       - uses: leafo/gh-actions-lua@v10
         with:
-          luaVersion: "5.4"
+          # The "5.4" alias resolves to Lua 5.4.4, while the tested
+          # native matrix uses 5.4.9. Pin the same supported patch release.
+          luaVersion: "5.4.9"
 
       - uses: leafo/gh-actions-luarocks@v4
 
