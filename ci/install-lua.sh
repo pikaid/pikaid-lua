@@ -27,7 +27,8 @@ mkdir -p "$prefix/bin" "$prefix/include" "$prefix/lib"
 
 if [[ -d "$source_dir/src" ]]; then
   # Official release tarball: install the built interpreter, headers and lib.
-  make -C "$source_dir" posix
+  # POSIX-only builds cannot load LuaRocks C modules (for example lfs.so).
+  make -C "$source_dir" posix MYCFLAGS="-DLUA_USE_DLOPEN" MYLIBS="-ldl"
   make -C "$source_dir" install INSTALL_TOP="$prefix"
 else
   # The tagged GitHub mirror has a flat C source tree and no release Makefile.
@@ -38,14 +39,14 @@ else
     for file in *.c; do
       case "$file" in lua.c|luac.c|onelua.c|ltests.c) continue ;; esac
       obj="${file%.c}.o"
-      cc -O2 -DLUA_USE_POSIX -c "$file" -o "$obj"
+      cc -O2 -DLUA_USE_LINUX -c "$file" -o "$obj"
       objects+=("$obj")
     done
     test "${#objects[@]}" -gt 0
     ar rcs "$prefix/lib/liblua.a" "${objects[@]}"
-    cc -O2 -DLUA_USE_POSIX -Wl,-E -o "$prefix/bin/lua" \
+    cc -O2 -DLUA_USE_LINUX -Wl,-E -o "$prefix/bin/lua" \
       lua.c "$prefix/lib/liblua.a" -lm -ldl
-    cc -O2 -DLUA_USE_POSIX -o "$prefix/bin/luac" \
+    cc -O2 -DLUA_USE_LINUX -o "$prefix/bin/luac" \
       luac.c "$prefix/lib/liblua.a" -lm -ldl
     install -m 644 lua.h luaconf.h lualib.h lauxlib.h "$prefix/include/"
   )
